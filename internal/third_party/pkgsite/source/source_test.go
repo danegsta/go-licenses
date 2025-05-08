@@ -422,7 +422,7 @@ func TestModuleInfo(t *testing.T) {
 			}
 
 			skip := skipReplayTests[test.desc]
-			check(t, "file", info.FileURL(test.file), test.wantFile, skip)
+			check(t, "file", info.FileURL(context.Background(), &Client{client}, test.file), test.wantFile, skip)
 		})
 	}
 }
@@ -663,85 +663,6 @@ func TestRemoveVersionSuffix(t *testing.T) {
 		if got != test.want {
 			t.Errorf("%q: got %q, want %q", test.in, got, test.want)
 		}
-	}
-}
-
-func TestAdjustVersionedModuleDirectory(t *testing.T) {
-	ctx := context.Background()
-	client := NewClient(testTimeout)
-	client.httpClient.Transport = testTransport(map[string]string{
-		// Repo "branch" follows the "major branch" convention: versions 2 and higher
-		// live in the same directory as versions 0 and 1, but on a different branch (or tag).
-		"http://x.com/branch/v1.0.0/go.mod":         "", // v1 module at the root
-		"http://x.com/branch/v2.0.0/go.mod":         "", // v2 module at the root
-		"http://x.com/branch/dir/v1.0.0/dir/go.mod": "", // v1 module in a subdirectory
-		"http://x.com/branch/dir/v2.0.0/dir/go.mod": "", // v2 module in a subdirectory
-		// Repo "sub" follows the "major subdirectory" convention: versions 2 and higher
-		// live in a "vN" subdirectory.
-		"http://x.com/sub/v1.0.0/go.mod":            "", // v1 module at the root
-		"http://x.com/sub/v2.0.0/v2/go.mod":         "", // v2 module at root/v2.
-		"http://x.com/sub/dir/v1.0.0/dir/go.mod":    "", // v1 module in a subdirectory
-		"http://x.com/sub/dir/v2.0.0/dir/v2/go.mod": "", // v2 module in subdirectory/v2
-	})
-
-	for _, test := range []struct {
-		repo, moduleDir, commit string
-		want                    string
-	}{
-		{
-			// module path is x.com/branch
-			"branch", "", "v1.0.0",
-			"",
-		},
-		{
-			// module path is x.com/branch/v2; remove the "v2" to get the module dir
-			"branch", "v2", "v2.0.0",
-			"",
-		},
-		{
-			// module path is x.com/branch/dir
-			"branch", "dir", "dir/v1.0.0",
-			"dir",
-		},
-		{
-			// module path is x.com/branch/dir/v2; remove the v2 to get the module dir
-			"branch", "dir/v2", "dir/v2.0.0",
-			"dir",
-		},
-		{
-			// module path is x.com/sub
-			"sub", "", "v1.0.0",
-			"",
-		},
-		{
-			// module path is x.com/sub/v2; do not remove the v2
-			"sub", "v2", "v2.0.0",
-			"v2",
-		},
-		{
-			// module path is x.com/sub/dir
-			"sub", "dir", "dir/v1.0.0",
-			"dir",
-		},
-		{
-			// module path is x.com/sub/dir/v2; do not remove the v2
-			"sub", "dir/v2", "dir/v2.0.0",
-			"dir/v2",
-		},
-	} {
-		t.Run(test.repo+","+test.moduleDir+","+test.commit, func(t *testing.T) {
-			info := &Info{
-				repoURL:   "http://x.com/" + test.repo,
-				moduleDir: test.moduleDir,
-				commit:    test.commit,
-				templates: urlTemplates{File: "{repo}/{commit}/{file}"},
-			}
-			adjustVersionedModuleDirectory(ctx, client, info)
-			got := info.moduleDir
-			if got != test.want {
-				t.Errorf("got %q, want %q", got, test.want)
-			}
-		})
 	}
 }
 

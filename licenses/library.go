@@ -399,7 +399,8 @@ func (l *Library) FileURL(ctx context.Context, cl *source.Client, filePath strin
 	}
 	// TODO: there are still rare cases this may result in an incorrect URL.
 	// https://github.com/google/go-licenses/issues/73#issuecomment-1005587408
-	return remote.FileURL(relativePath), nil
+
+	return remote.FileURL(ctx, cl, relativePath), nil
 }
 
 func (l *Library) Version() string {

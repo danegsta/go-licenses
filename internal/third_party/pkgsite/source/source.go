@@ -37,6 +37,7 @@ import (
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/trace"
 	"golang.org/x/net/context/ctxhttp"
+	"k8s.io/klog/v2"
 )
 
 // Info holds source information about a module, used to generate URLs referring
@@ -49,12 +50,40 @@ type Info struct {
 }
 
 // FileURL returns a URL for a file whose pathname is relative to the module's home directory.
-func (i *Info) FileURL(pathname string) string {
+func (i *Info) FileURL(ctx context.Context, client *Client, pathname string) string {
+	fileURL := i.toURL(pathname, false)
+
+	dirWithoutVersion := removeVersionSuffix(i.moduleDir)
+	if i.moduleDir == dirWithoutVersion {
+		return fileURL
+	}
+
+	// The module directory has a "/vN" suffix for N > 1. Check to see if the given URL
+	// is valid or if we actually need to use a path without the version.
+	res, err := client.doURL(ctx, "HEAD", i.toURL(pathname, true), true)
+	if err != nil {
+		klog.Warningf("assuming %s is not under versioned path", fileURL)
+		// The HEAD request failed. Assume that the directory without the version is correct.
+		i.moduleDir = dirWithoutVersion
+		// Return the URL without "/vN" path
+		return i.toURL(pathname, false)
+	} else {
+		res.Body.Close()
+		return fileURL
+	}
+}
+
+func (i *Info) toURL(pathname string, raw bool) string {
 	if i == nil {
 		return ""
 	}
+
 	dir, base := path.Split(pathname)
-	return expand(i.templates.File, map[string]string{
+	template := i.templates.Raw
+	if !raw || template == "" {
+		template = i.templates.File
+	}
+	return expand(template, map[string]string{
 		"repo":       i.repoURL,
 		"importPath": path.Join(strings.TrimPrefix(i.repoURL, "https://"), dir),
 		"commit":     i.commit,
@@ -151,7 +180,7 @@ func ModuleInfo(ctx context.Context, client *Client, modulePath, v string) (info
 		}
 	}
 	if info != nil {
-		adjustVersionedModuleDirectory(ctx, client, info)
+		_ = info.FileURL(ctx, client, "go.mod")
 	}
 	if strings.HasPrefix(modulePath, "golang.org/") {
 		adjustGoRepoInfo(info, modulePath, version.IsPseudo(v))
@@ -268,7 +297,7 @@ func adjustGoRepoInfo(info *Info, modulePath string, isHash bool) {
 // the repo follows the "major branch" convention for versions 2 and above.
 // E.g. this function could return "foo/v2", but the module files live under "foo"; the
 // "/v2" is part of the module path (and the import paths of its packages) but
-// is not a subdirectory. This mistake is corrected in adjustVersionedModuleDirectory,
+// is not a subdirectory. This mistake is corrected in FileURL,
 // once we have all the information we need to fix it.
 //
 // repo + "/" + relativeModulePath is often, but not always, equal to
@@ -434,29 +463,6 @@ func matchLegacyTemplates(ctx context.Context, sm *sourceMeta) (_ urlTemplates, 
 		File:      file,
 		Line:      line,
 	}, nil
-}
-
-// adjustVersionedModuleDirectory changes info.moduleDir if necessary to
-// correctly reflect the repo structure. info.moduleDir will be wrong if it has
-// a suffix "/vN" for N > 1, and the repo uses the "major branch" convention,
-// where modules at version 2 and higher live on branches rather than
-// subdirectories. See https://research.swtch.com/vgo-module for a discussion of
-// the "major branch" vs. "major subdirectory" conventions for organizing a
-// repo.
-func adjustVersionedModuleDirectory(ctx context.Context, client *Client, info *Info) {
-	dirWithoutVersion := removeVersionSuffix(info.moduleDir)
-	if info.moduleDir == dirWithoutVersion {
-		return
-	}
-	// moduleDir does have a "/vN" for N > 1. To see if that is the actual directory,
-	// fetch the go.mod file from it.
-	res, err := client.doURL(ctx, "HEAD", info.FileURL("go.mod"), true)
-	// On any failure, assume that the right directory is the one without the version.
-	if err != nil {
-		info.moduleDir = dirWithoutVersion
-	} else {
-		res.Body.Close()
-	}
 }
 
 // removeHTTPScheme removes an initial "http://" or "https://" from url.
